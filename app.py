@@ -1,14 +1,10 @@
 import streamlit as st
 import yt_dlp
-import os
-import tempfile
 import re
-import shutil
 
 
 st.set_page_config(page_title="YouTube Audio Downloader", layout="centered")
 
-# Custom CSS for clean UI
 st.markdown("""
 <style>
     .block-container {
@@ -42,12 +38,28 @@ st.markdown("""
         color: #444;
         font-size: 0.9rem;
     }
+    .download-link {
+        display: block;
+        text-align: center;
+        background: #ff4b4b;
+        color: white !important;
+        padding: 0.75rem 1.5rem;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 1.1rem;
+        margin-top: 1rem;
+    }
+    .download-link:hover {
+        background: #e03e3e;
+        color: white !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("YouTube Audio Downloader")
 st.markdown(
-    '<p class="subtitle">Paste a YouTube link below and download the audio</p>',
+    '<p class="subtitle">Paste a YouTube link and get a direct download link</p>',
     unsafe_allow_html=True,
 )
 
@@ -73,53 +85,17 @@ def format_duration(seconds) -> str:
     return f"{minutes}:{secs:02d}"
 
 
-def is_ffmpeg_available() -> bool:
-    return shutil.which("ffmpeg") is not None
-
-
-def get_video_info(url: str) -> dict:
+def get_audio_info(url: str) -> dict:
+    """Extract video info and best audio stream URL."""
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
+        'format': 'bestaudio[ext=m4a]/bestaudio',
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return info
-
-
-def download_audio(url: str, temp_dir: str) -> str:
-    """Download audio from a YouTube URL."""
-    has_ffmpeg = is_ffmpeg_available()
-
-    if has_ffmpeg:
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-        }
-    else:
-        # No FFmpeg: download best audio as M4A directly
-        ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio',
-        }
-
-    ydl_opts.update({
-        'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-        'quiet': True,
-        'no_warnings': True,
-    })
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-
-    files = os.listdir(temp_dir)
-    if files:
-        return os.path.join(temp_dir, files[0])
-    return None
 
 
 # --- Main UI ---
@@ -130,43 +106,32 @@ url = st.text_input(
     label_visibility="collapsed",
 )
 
-# Session state
-if "video_info" not in st.session_state:
-    st.session_state.video_info = None
-if "downloaded_file" not in st.session_state:
-    st.session_state.downloaded_file = None
-if "downloaded_data" not in st.session_state:
-    st.session_state.downloaded_data = None
-if "last_url" not in st.session_state:
-    st.session_state.last_url = ""
+if "audio_info" not in st.session_state:
+    st.session_state.audio_info = None
 
-fetch_btn = st.button("Fetch Info", use_container_width=True)
+fetch_btn = st.button("Get Download Link", use_container_width=True, type="primary")
 
-if not is_ffmpeg_available():
-    st.info(
-        "FFmpeg not found. Audio will download as M4A instead of MP3. "
-        "Install FFmpeg for MP3 conversion."
-    )
-
-# Fetch video info
 if fetch_btn and url:
     if not is_valid_youtube_url(url):
         st.error("Please enter a valid YouTube URL.")
     else:
-        with st.spinner("Fetching info..."):
+        with st.spinner("Extracting audio link..."):
             try:
-                info = get_video_info(url)
-                st.session_state.video_info = info
-                st.session_state.last_url = url
-                st.session_state.downloaded_file = None
-                st.session_state.downloaded_data = None
+                info = get_audio_info(url)
+                st.session_state.audio_info = info
             except Exception as e:
-                st.error(f"Could not fetch video info: {str(e)}")
-                st.session_state.video_info = None
+                error_msg = str(e)
+                if "403" in error_msg:
+                    st.error(
+                        "YouTube blocked the server request. "
+                        "The direct link method may still work - try again."
+                    )
+                else:
+                    st.error(f"Failed: {error_msg}")
+                st.session_state.audio_info = None
 
-# Display info and download
-if st.session_state.video_info:
-    info = st.session_state.video_info
+if st.session_state.audio_info:
+    info = st.session_state.audio_info
     st.markdown("---")
 
     thumbnail = info.get("thumbnail")
@@ -176,62 +141,39 @@ if st.session_state.video_info:
     title = info.get('title', 'Unknown Title')
     channel = info.get('uploader', 'Unknown')
     duration = format_duration(info.get('duration'))
-    views = info.get('view_count')
-    views_str = f"{views:,}" if views else "N/A"
 
     st.markdown(f"""
     <div class="video-info">
         <h4>{title}</h4>
         <p><strong>Channel:</strong> {channel}</p>
         <p><strong>Duration:</strong> {duration}</p>
-        <p><strong>Views:</strong> {views_str}</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Download button
-    if st.button("Download Audio", use_container_width=True, type="primary"):
-        with st.spinner("Downloading audio..."):
-            try:
-                temp_dir = tempfile.mkdtemp()
-                filepath = download_audio(st.session_state.last_url, temp_dir)
-                if filepath and os.path.exists(filepath):
-                    with open(filepath, "rb") as f:
-                        st.session_state.downloaded_data = f.read()
-                    st.session_state.downloaded_file = os.path.basename(filepath)
-                    os.remove(filepath)
-                    os.rmdir(temp_dir)
-                else:
-                    st.error("Download failed. File not found.")
-            except Exception as e:
-                error_msg = str(e)
-                if "403" in error_msg:
-                    st.error(
-                        "YouTube blocked this request (HTTP 403). "
-                        "This typically happens on cloud-hosted servers. "
-                        "Try running this app locally instead."
-                    )
-                else:
-                    st.error(f"Download failed: {error_msg}")
+    # Get the direct audio URL
+    audio_url = info.get('url')
+    if not audio_url:
+        # Try from requested_formats or formats
+        formats = info.get('requested_formats') or info.get('formats') or []
+        for f in reversed(formats):
+            if f.get('acodec') and f['acodec'] != 'none':
+                audio_url = f.get('url')
+                break
 
-    # Save button
-    if st.session_state.downloaded_data and st.session_state.downloaded_file:
-        st.success("Ready to save.")
-        filename = st.session_state.downloaded_file
-        if filename.endswith(".mp3"):
-            mime = "audio/mpeg"
-        elif filename.endswith(".m4a"):
-            mime = "audio/mp4"
-        elif filename.endswith(".webm"):
-            mime = "audio/webm"
-        else:
-            mime = "application/octet-stream"
-        st.download_button(
-            label=f"Save: {filename}",
-            data=st.session_state.downloaded_data,
-            file_name=filename,
-            mime=mime,
-            use_container_width=True,
+    if audio_url:
+        st.markdown(
+            f'<a class="download-link" href="{audio_url}" target="_blank">'
+            f'Download Audio'
+            f'</a>',
+            unsafe_allow_html=True,
         )
+        st.caption(
+            "This link opens the audio stream directly. "
+            "Long-press or right-click to save. "
+            "Link expires in a few hours."
+        )
+    else:
+        st.error("Could not extract a direct audio URL.")
 
 # Footer
 st.markdown("---")
