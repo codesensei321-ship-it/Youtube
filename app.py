@@ -171,7 +171,7 @@ if st.session_state.video_info:
 
     thumbnail = info.get("thumbnail")
     if thumbnail:
-        st.image(thumbnail, use_column_width=True)
+        st.image(thumbnail)
 
     title = info.get('title', 'Unknown Title')
     channel = info.get('uploader', 'Unknown')
