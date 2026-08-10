@@ -203,7 +203,15 @@ if st.session_state.video_info:
                 else:
                     st.error("Download failed. File not found.")
             except Exception as e:
-                st.error(f"Download failed: {str(e)}")
+                error_msg = str(e)
+                if "403" in error_msg:
+                    st.error(
+                        "YouTube blocked this request (HTTP 403). "
+                        "This typically happens on cloud-hosted servers. "
+                        "Try running this app locally instead."
+                    )
+                else:
+                    st.error(f"Download failed: {error_msg}")
 
     # Save button
     if st.session_state.downloaded_data and st.session_state.downloaded_file:
